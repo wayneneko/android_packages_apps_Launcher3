@@ -278,6 +278,9 @@ public final class OverviewComponentObserver {
                         ACTION_PACKAGE_ADDED, ACTION_PACKAGE_CHANGED, ACTION_PACKAGE_REMOVED));
             }
         }
+        if (!BB10FlowBridge.isBB10LauncherDefaultHome(this, DEFAULT_DISPLAY)) {
+            BB10FlowBridge.unbindPeekClientIfUnused(mContext);
+        }
         dispatchOverviewState();
     }
 
@@ -295,6 +298,7 @@ public final class OverviewComponentObserver {
     private void onDestroy() {
         mUserPreferenceChangeReceiver.close();
         unregisterOtherHomeAppUpdateReceiver();
+        BB10FlowBridge.unbindPeekClientIfUnused(mContext);
     }
 
     private void unregisterOtherHomeAppUpdateReceiver() {

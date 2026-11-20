@@ -438,6 +438,36 @@ constructor(
             ActiveGestureProtoLogProxy.logOnTaskAnimationManagerNotAvailable(command.displayId)
             return false
         }
+        val isBB10RedirectCommand =
+            command.type == TOGGLE ||
+                command.type == TOGGLE_WITH_FOCUS ||
+                command.type == TOGGLE_OVERVIEW_PREVIOUS ||
+                (command.type == SHOW_ALT_TAB &&
+                    (taskbarInteractor == null ||
+                        !shouldShowAltTabKqs(deviceProfile, command.displayId)))
+        if (
+            isBB10RedirectCommand &&
+                BB10FlowBridge.isBB10LauncherDefaultHome(
+                    overviewComponentObserver,
+                    command.displayId,
+                )
+        ) {
+            if (taskAnimationManager.isRecentsAnimationRunning) {
+                taskAnimationManager.finishRunningRecentsAnimation(
+                    /* toHome= */ true,
+                    ActiveGestureLog.CompoundString(
+                        "OverviewCommandHelper-BB10FlowBridge-${command.type}"
+                    ),
+                )
+            }
+            BB10FlowBridge.launchActiveFrames(
+                touchInteractionHandler.get(),
+                overviewComponentObserver.getHomeIntent(command.displayId),
+                "OverviewCommandHelper-${command.type}",
+            )
+            return true
+        }
+
         // Make sure the recents view is available if the recents window hasn't been created yet
         (recentsViewContainer as? RecentsWindowManager)?.createWindowView()
 
@@ -498,15 +528,13 @@ constructor(
                 }
             }
 
-            TOGGLE_WITH_FOCUS ->
-                // When Recents is not currently visible, the command's type is SHOW
-                // when overview is triggered via the keyboard overview button or Action+Tab
-                // keys (Not Alt+Tab which is KQS). The overview button on-screen in 3-button
-                // nav is TYPE_TOGGLE.
-                keyboardFocusTask = KeyboardFocusTask.ExpectedCurrentTask
-
+            TOGGLE_WITH_FOCUS,
             TOGGLE,
-            TOGGLE_OVERVIEW_PREVIOUS -> {}
+            TOGGLE_OVERVIEW_PREVIOUS -> {
+                if (command.type == TOGGLE_WITH_FOCUS) {
+                    keyboardFocusTask = KeyboardFocusTask.ExpectedCurrentTask
+                }
+            }
         }
 
         recentsView?.setKeyboardFocusTask(keyboardFocusTask)

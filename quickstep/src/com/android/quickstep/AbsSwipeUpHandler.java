@@ -798,6 +798,11 @@ public abstract class AbsSwipeUpHandler<
             @Override
             public void onMotionPauseDetected() {
                 mHasMotionEverBeenPaused = true;
+                if (BB10FlowBridge.isBB10LauncherDefaultHome(mGestureState)) {
+                    // BB10 Flow unifies swipe-up & hold to Active Frames; never attach stock
+                    // Recents or trigger an Overview haptic (Peek Hub owns its own haptics).
+                    return;
+                }
                 maybeUpdateRecentsAttachedState(true/* animate */, true/* moveRunningTask */);
                 Optional.ofNullable(mContainerInterface.getTaskbarInteractor())
                         .ifPresent(TaskbarInteractor::startTranslationSpring);
@@ -868,6 +873,9 @@ public abstract class AbsSwipeUpHandler<
         } else if (runningTaskTarget != null && isNotInRecents(runningTaskTarget)) {
             // The window is going away so make sure recents is always visible in this case.
             recentsAttachedToAppWindow = true;
+        } else if (BB10FlowBridge.isBB10LauncherDefaultHome(mGestureState)) {
+            recentsAttachedToAppWindow =
+                    mIsLikelyToStartNewTask && !mGestureState.isBB10PeekActive();
         } else {
             recentsAttachedToAppWindow = mHasMotionEverBeenPaused || mIsLikelyToStartNewTask;
         }
@@ -1398,11 +1406,27 @@ public abstract class AbsSwipeUpHandler<
 
         if (mGestureState.isHandlingAtomicEvent()) {
             GestureEndTarget endTarget = mGestureState.getAtomicEndTarget();
+            if (endTarget == RECENTS && BB10FlowBridge.isBB10LauncherDefaultHome(mGestureState)) {
+                endTarget = getHomeTarget();
+                mGestureState.setBB10RedirectedFromRecents(true);
+            }
             ActiveGestureProtoLogProxy.logCalculateEndTargetResultAndReason(
                     endTarget.toString(),
                     new ActiveGestureLog.CompoundString(
                             "mGestureState.isHandlingAtomicEvent = true"));
             return endTarget;
+        }
+
+        if (BB10FlowBridge.isBB10LauncherDefaultHome(mGestureState)) {
+            if (mGestureState.isBB10PeekActive()) {
+                GestureEndTarget peekTarget = !isCancel && mGestureState.isBB10PeekCommitted()
+                        ? getHomeTarget()
+                        : LAST_TASK;
+                ActiveGestureProtoLogProxy.logCalculateEndTargetResultAndReason(
+                        peekTarget.toString(),
+                        new ActiveGestureLog.CompoundString("BB10FlowBridge Peek Hub"));
+                return peekTarget;
+            }
         }
 
         GestureEndTarget endTarget;
@@ -1419,6 +1443,12 @@ public abstract class AbsSwipeUpHandler<
             potentialReason.append("isFlingY = false -> used calculateEndTargetForNonFling -> ");
             endTarget = calculateEndTargetForNonFling(
                     velocityPxPerMs, horizontalTouchSlopPassed, potentialReason);
+        }
+
+        if (endTarget == RECENTS && BB10FlowBridge.isBB10LauncherDefaultHome(mGestureState)) {
+            endTarget = getHomeTarget();
+            mGestureState.setBB10RedirectedFromRecents(true);
+            potentialReason.append(" -> redirected RECENTS to BB10 Active Frames HOME");
         }
 
         if (mDeviceState.isOverviewDisabled() && endTarget == RECENTS) {

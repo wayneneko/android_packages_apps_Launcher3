@@ -74,6 +74,7 @@ import com.android.launcher3.util.MSDLPlayerWrapper;
 import com.android.launcher3.util.ObjectWrapper;
 import com.android.launcher3.util.StableViewInfo;
 import com.android.quickstep.AbsSwipeUpHandler;
+import com.android.quickstep.BB10FlowBridge;
 import com.android.quickstep.GestureState;
 import com.android.quickstep.RecentsAnimationController;
 import com.android.quickstep.RecentsAnimationDeviceState;
@@ -274,7 +275,8 @@ public class RecentsWindowSwipeHandler extends AbsSwipeUpHandler<RecentsWindowMa
             @NonNull String reason) {
         ActivityOptions options = ActivityOptions.makeCustomAnimation(mContext, 0, 0);
         Intent intent = new Intent(mGestureState.getHomeIntent());
-        if (gestureContractAnimationFactory != null) {
+        BB10FlowBridge.decorateHomeIntent(intent, mGestureState);
+        if (gestureContractAnimationFactory != null && !mGestureState.isBB10PeekCommitted()) {
             TaskKey taskKey = null;
             if (targetTaskView != null) {
                 Task firstTask = targetTaskView.getFirstTask();
@@ -299,8 +301,20 @@ public class RecentsWindowSwipeHandler extends AbsSwipeUpHandler<RecentsWindowMa
         if (mAppCanEnterPip) {
             // Make sure Launcher is resumed after auto-enter-pip transition to actually trigger
             // the PiP task appearing.
-            recentsCallback = () -> mRecentsWindowManager.startHomeWithRemoteAnimation(
-                    /* finishRecentsAnimation= */ true, /* onHomeAnimationComplete= */ callback);
+            if (BB10FlowBridge.isBB10LauncherDefaultHome(mGestureState)) {
+                recentsCallback = () -> {
+                    callback.run();
+                    startHomeIntent(
+                            /* gestureContractAnimationFactory= */ null,
+                            /* runningTaskTarget= */ null,
+                            /* targetTaskView= */ null,
+                            /* launchCookie= */ null,
+                            /* reason= */ "RecentsWindowSwipeHandler-resumeBB10Launcher");
+                };
+            } else {
+                recentsCallback = () -> mRecentsWindowManager.startHomeWithRemoteAnimation(
+                        /* finishRecentsAnimation= */ true, /* onHomeAnimationComplete= */ callback);
+            }
         } else {
             recentsCallback = callback;
         }

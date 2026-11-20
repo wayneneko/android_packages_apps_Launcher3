@@ -198,6 +198,9 @@ public class GestureState implements RecentsAnimationCallbacks.RecentsAnimationL
     private boolean mIsInExtendedSlopRegion;
     private boolean mIsTaskbarAlreadyOpen;
     private boolean mIsTaskbarAllAppsOpen;
+    private boolean mBB10PeekActive;
+    private boolean mBB10PeekCommitted;
+    private boolean mBB10RedirectedFromRecents;
 
     public GestureState(OverviewComponentObserver componentObserver, int displayId, int gestureId) {
         mDisplayId = displayId;
@@ -223,6 +226,9 @@ public class GestureState implements RecentsAnimationCallbacks.RecentsAnimationL
         mLastStartedTaskId = other.mLastStartedTaskId;
         mIsTaskbarAlreadyOpen = other.mIsTaskbarAlreadyOpen;
         mIsTaskbarAllAppsOpen = other.mIsTaskbarAllAppsOpen;
+        mBB10PeekActive = other.mBB10PeekActive;
+        mBB10PeekCommitted = other.mBB10PeekCommitted;
+        mBB10RedirectedFromRecents = other.mBB10RedirectedFromRecents;
     }
 
     public GestureState() {
@@ -262,6 +268,30 @@ public class GestureState implements RecentsAnimationCallbacks.RecentsAnimationL
      */
     public void setTaskbarAllAppsOpen(boolean taskbarAllAppsOpen) {
         mIsTaskbarAllAppsOpen = taskbarAllAppsOpen;
+    }
+
+    public boolean isBB10PeekActive() {
+        return mBB10PeekActive;
+    }
+
+    public void setBB10PeekActive(boolean active) {
+        mBB10PeekActive = active;
+    }
+
+    public boolean isBB10PeekCommitted() {
+        return mBB10PeekCommitted;
+    }
+
+    public void setBB10PeekCommitted(boolean committed) {
+        mBB10PeekCommitted = committed;
+    }
+
+    public boolean isBB10RedirectedFromRecents() {
+        return mBB10RedirectedFromRecents;
+    }
+
+    public void setBB10RedirectedFromRecents(boolean redirected) {
+        mBB10RedirectedFromRecents = redirected;
     }
 
     @Nullable

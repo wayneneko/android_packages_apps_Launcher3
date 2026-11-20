@@ -221,7 +221,8 @@ public class FallbackSwipeHandler extends
             @NonNull String reason) {
         ActivityOptions options = ActivityOptions.makeCustomAnimation(mContext, 0, 0);
         Intent intent = new Intent(mGestureState.getHomeIntent());
-        if (gestureContractAnimationFactory != null) {
+        BB10FlowBridge.decorateHomeIntent(intent, mGestureState);
+        if (gestureContractAnimationFactory != null && !mGestureState.isBB10PeekCommitted()) {
             TaskKey taskKey = null;
             if (targetTaskView != null) {
                 Task firstTask = targetTaskView.getFirstTask();

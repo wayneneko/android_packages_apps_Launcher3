@@ -51,6 +51,7 @@ import com.android.launcher3.util.Preconditions;
 import com.android.launcher3.util.TraceHelper;
 import com.android.quickstep.AbsSwipeUpHandler;
 import com.android.quickstep.AbsSwipeUpHandler.Factory;
+import com.android.quickstep.BB10FlowBridge;
 import com.android.quickstep.GestureState;
 import com.android.quickstep.InputConsumer;
 import com.android.quickstep.RecentsAnimationCallbacks;
@@ -129,6 +130,10 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
     // The callback called upon finishing the recents transition if it was force-canceled
     private Runnable mForceFinishRecentsTransitionCallback;
 
+    // Optional BB10 Flow in-app L-gesture (swipe up -> bend right) Peek Hub tracker
+    private final BB10FlowBridge.PeekGestureTracker mBB10PeekTracker;
+    private boolean mRecentsDispatcherCancelledForPeek;
+
     public OtherActivityInputConsumer(
             Context base,
             RecentsAnimationDeviceState deviceState,
@@ -173,6 +178,20 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
         mStartDisplacement = continuingPreviousGesture ? 0 : -mTouchSlop;
         mDisableHorizontalSwipe = !mPassedPilferInputSlop && disableHorizontalSwipe;
         mRotationTouchHelper = rotationTouchHelper;
+
+        boolean runningInApp = mGestureState.getRunningTask() != null
+                && !mGestureState.getRunningTask().isHomeTask();
+        boolean bottomNavBar = !mNavBarPosition.isLeftEdge() && !mNavBarPosition.isRightEdge();
+        if (BB10FlowBridge.isBB10LauncherDefaultHome(mGestureState)
+                && mDeviceState.isFullyGesturalNavMode()
+                && runningInApp
+                && bottomNavBar
+                && !continuingPreviousGesture
+                && !mGestureState.isTrackpadGesture()) {
+            mBB10PeekTracker = BB10FlowBridge.createPeekTracker(base, mGestureState);
+        } else {
+            mBB10PeekTracker = null;
+        }
     }
 
     @Override
@@ -205,7 +224,8 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
 
         // Proxy events to recents view
         if (mPassedWindowMoveSlop && mInteractionHandler != null
-                && !mRecentsViewDispatcher.hasConsumer()) {
+                && !mRecentsViewDispatcher.hasConsumer()
+                && !mRecentsDispatcherCancelledForPeek) {
             mRecentsViewDispatcher.setConsumer(mInteractionHandler
                     .getRecentsViewDispatcher(mNavBarPosition.getRotation()));
             int action = ev.getAction();
@@ -232,7 +252,7 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                 }
                 default -> mRecentsViewDispatcher.dispatchEvent(ev);
             }
-        } else {
+        } else if (!mRecentsDispatcherCancelledForPeek) {
             mRecentsViewDispatcher.dispatchEvent(ev);
         }
         ev.setEdgeFlags(edgeFlags);
@@ -252,6 +272,9 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                 mActivePointerId = ev.getPointerId(0);
                 mDownPos.set(ev.getX(), ev.getY());
                 mLastPos.set(mDownPos);
+                if (mBB10PeekTracker != null) {
+                    mBB10PeekTracker.onDown(mDownPos.x, mDownPos.y);
+                }
 
                 // Start the window animation on down to give more time for launcher to draw if the
                 // user didn't start the gesture over the back button
@@ -280,11 +303,16 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                 int ptrId = ev.getPointerId(ptrIdx);
                 if (ptrId == mActivePointerId) {
                     final int newPointerIdx = ptrIdx == 0 ? 1 : 0;
+                    float shiftX = ev.getX(newPointerIdx) - mLastPos.x;
+                    float shiftY = ev.getY(newPointerIdx) - mLastPos.y;
                     mDownPos.set(
                             ev.getX(newPointerIdx) - (mLastPos.x - mDownPos.x),
                             ev.getY(newPointerIdx) - (mLastPos.y - mDownPos.y));
                     mLastPos.set(ev.getX(newPointerIdx), ev.getY(newPointerIdx));
                     mActivePointerId = ev.getPointerId(newPointerIdx);
+                    if (mBB10PeekTracker != null) {
+                        mBB10PeekTracker.onPointerShift(shiftX, shiftY);
+                    }
                 }
                 break;
             }
@@ -380,7 +408,22 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                 }
 
                 if (mInteractionHandler != null) {
-                    if (mPassedWindowMoveSlop) {
+                    boolean wasPeekActive = mBB10PeekTracker != null
+                            && mBB10PeekTracker.isPeekActive();
+                    if (mPassedWindowMoveSlop && mBB10PeekTracker != null) {
+                        mBB10PeekTracker.onMove(mLastPos.x, mLastPos.y);
+                    }
+                    boolean peekActive = mBB10PeekTracker != null
+                            && mBB10PeekTracker.isPeekActive();
+                    if (peekActive && !wasPeekActive && !mRecentsDispatcherCancelledForPeek) {
+                        mRecentsDispatcherCancelledForPeek = true;
+                        MotionEvent cancelEv = MotionEvent.obtain(ev);
+                        cancelEv.setAction(ACTION_CANCEL);
+                        mRecentsViewDispatcher.dispatchEvent(cancelEv);
+                        cancelEv.recycle();
+                    }
+
+                    if (mPassedWindowMoveSlop && !peekActive) {
                         // Move
                         mInteractionHandler.updateDisplacement(displacement - mStartDisplacement);
                     }
@@ -389,11 +432,15 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                             || mGestureState.isTrackpadGesture()) {
                         boolean minSwipeMet = upDist >= Math.max(mMotionPauseMinDisplacement,
                                 mInteractionHandler.getThresholdToAllowMotionPause());
-                        mInteractionHandler.setCanSlowSwipeGoHome(minSwipeMet);
+                        mInteractionHandler.setCanSlowSwipeGoHome(minSwipeMet && !peekActive);
                         mMotionPauseDetector.setDisallowPause(!minSwipeMet
-                                || isLikelyToStartNewTask);
-                        mMotionPauseDetector.addPosition(ev);
-                        mInteractionHandler.setIsLikelyToStartNewTask(isLikelyToStartNewTask);
+                                || isLikelyToStartNewTask
+                                || peekActive);
+                        if (!peekActive) {
+                            mMotionPauseDetector.addPosition(ev);
+                        }
+                        mInteractionHandler.setIsLikelyToStartNewTask(
+                                isLikelyToStartNewTask && !peekActive);
                     }
                 }
                 break;
@@ -484,17 +531,25 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
         boolean isCanceled = ev.getActionMasked() == ACTION_CANCEL;
         if (mPassedWindowMoveSlop && mInteractionHandler != null) {
             if (isCanceled) {
+                if (mBB10PeekTracker != null) {
+                    mBB10PeekTracker.finish(0f, /* isCanceled= */ true);
+                }
                 mInteractionHandler.onGestureCancelled();
             } else {
                 mVelocityTracker.computeCurrentVelocity(PX_PER_MS);
                 float velocityXPxPerMs = mVelocityTracker.getXVelocity(mActivePointerId);
                 float velocityYPxPerMs = mVelocityTracker.getYVelocity(mActivePointerId);
+                if (mBB10PeekTracker != null) {
+                    mBB10PeekTracker.finish(velocityXPxPerMs, /* isCanceled= */ false);
+                }
                 float velocityPxPerMs = mNavBarPosition.isRightEdge()
                         ? velocityXPxPerMs
                         : mNavBarPosition.isLeftEdge()
                                 ? -velocityXPxPerMs
                                 : velocityYPxPerMs;
-                mInteractionHandler.updateDisplacement(getDisplacement(ev) - mStartDisplacement);
+                if (mBB10PeekTracker == null || !mBB10PeekTracker.isPeekActive()) {
+                    mInteractionHandler.updateDisplacement(getDisplacement(ev) - mStartDisplacement);
+                }
                 mInteractionHandler.onGestureEnded(velocityPxPerMs,
                         new PointF(velocityXPxPerMs, velocityYPxPerMs),
                         Math.abs(mDownPos.x - mLastPos.x) > mTouchSlop);
@@ -537,6 +592,9 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
     }
 
     private void cleanupAfterGesture() {
+        if (mBB10PeekTracker != null) {
+            mBB10PeekTracker.cancelIfActive();
+        }
         if (mVelocityTracker != null) {
             mVelocityTracker.recycle();
             mVelocityTracker = null;
