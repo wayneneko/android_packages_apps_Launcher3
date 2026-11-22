@@ -148,6 +148,9 @@ public final class RecentsActivity extends StatefulActivity<RecentsState> implem
 
     // Tracks whether the current state should have RecentsView visible.
     private boolean mIsInRecentsViewVisibleState = false;
+    @Nullable private BB10PeekStageView mBB10PeekStageView;
+    @Nullable private View mEmptyRecentsMessageView;
+    @Nullable private Object mBB10PeekOwner;
 
 
     /**
@@ -173,6 +176,7 @@ public final class RecentsActivity extends StatefulActivity<RecentsState> implem
         mFallbackRecentsView = (FallbackActivityRecentsView) recentsViewStub.inflate();
         mActionsView = rootView.findViewById(R.id.overview_actions_view);
         ViewGroup emptyRecentsMessageView = rootView.findViewById(R.id.empty_recents_message_view);
+        mEmptyRecentsMessageView = emptyRecentsMessageView;
 
         if (DesktopModeStatus.canEnterDesktopMode(this)) {
             mDesktopRecentsTransitionController = new DesktopRecentsTransitionController(
@@ -267,6 +271,65 @@ public final class RecentsActivity extends StatefulActivity<RecentsState> implem
 
     public ScrimView getScrimView() {
         return mScrimView;
+    }
+
+    /**
+     * Toggles the full-bleed transparent {@link BB10PeekStageView} inside {@code mDragLayer}
+     * while suppressing stock Recents panels so crisp live wallpaper & Hub Peek render underneath
+     * the swiped foreground app leash. Uses an {@code owner} token so a stale gesture's teardown
+     * can never deactivate a newer gesture's active Peek stage.
+     */
+    @Nullable
+    public BB10PeekStageView setBB10PeekMode(boolean active, @NonNull Object owner) {
+        if (mDragLayer == null) return null;
+        if (active) {
+            if (mBB10PeekStageView == null) {
+                mBB10PeekStageView = new BB10PeekStageView(this);
+                BaseDragLayer.LayoutParams lp = new BaseDragLayer.LayoutParams(
+                        BaseDragLayer.LayoutParams.MATCH_PARENT,
+                        BaseDragLayer.LayoutParams.MATCH_PARENT);
+                lp.ignoreInsets = true;
+                // Add on top of RecentsView/EmptyMessage so stock panels can never draw over Peek
+                mDragLayer.addView(mBB10PeekStageView, lp);
+                if (mDeviceProfile != null) {
+                    mBB10PeekStageView.setInsets(mDeviceProfile.getInsets());
+                }
+            }
+            mBB10PeekOwner = owner;
+            if (mFallbackRecentsView != null) {
+                mFallbackRecentsView.setAlpha(0f);
+                mFallbackRecentsView.setVisibility(View.INVISIBLE);
+            }
+            if (mEmptyRecentsMessageView != null) {
+                mEmptyRecentsMessageView.setVisibility(View.GONE);
+            }
+            if (mActionsView != null) {
+                mActionsView.setVisibility(View.GONE);
+            }
+            if (mScrimView != null) {
+                mScrimView.setVisibility(View.INVISIBLE);
+            }
+            mBB10PeekStageView.bringToFront();
+            mBB10PeekStageView.activateStage();
+            return mBB10PeekStageView;
+        } else {
+            if (mBB10PeekOwner != owner) return null;
+            mBB10PeekOwner = null;
+            if (mBB10PeekStageView != null) {
+                mBB10PeekStageView.deactivateStage();
+            }
+            if (mFallbackRecentsView != null) {
+                mFallbackRecentsView.setAlpha(1f);
+                mFallbackRecentsView.setVisibility(View.VISIBLE);
+            }
+            if (mActionsView != null) {
+                mActionsView.setVisibility(View.VISIBLE);
+            }
+            if (mScrimView != null) {
+                mScrimView.setVisibility(View.VISIBLE);
+            }
+            return null;
+        }
     }
 
     @Override

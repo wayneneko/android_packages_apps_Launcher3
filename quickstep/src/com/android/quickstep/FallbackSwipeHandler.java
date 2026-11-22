@@ -29,6 +29,9 @@ import static com.android.launcher3.GestureNavContract.EXTRA_LAUNCH_COOKIE;
 import static com.android.launcher3.GestureNavContract.EXTRA_ON_FINISH_CALLBACK;
 import static com.android.launcher3.GestureNavContract.EXTRA_REMOTE_CALLBACK;
 import static com.android.launcher3.anim.AnimatorListeners.forEndCallback;
+import static com.android.quickstep.GestureState.GestureEndTarget.HOME;
+import static com.android.quickstep.GestureState.GestureEndTarget.LAST_TASK;
+import static com.android.quickstep.GestureState.STATE_END_TARGET_ANIMATION_FINISHED;
 import static com.android.quickstep.OverviewComponentObserver.startHomeIntentSafely;
 
 import android.animation.ObjectAnimator;
@@ -37,6 +40,7 @@ import android.app.TaskInfo;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Matrix;
+import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Bundle;
@@ -69,6 +73,7 @@ import com.android.launcher3.states.StateAnimationConfig;
 import com.android.launcher3.util.MSDLPlayerWrapper;
 import com.android.launcher3.util.ObjectWrapper;
 import com.android.launcher3.util.StableViewInfo;
+import com.android.quickstep.GestureState.GestureEndTarget;
 import com.android.quickstep.fallback.FallbackActivityRecentsView;
 import com.android.quickstep.fallback.RecentsState;
 import com.android.quickstep.util.ActiveGestureLog;
@@ -107,6 +112,8 @@ public class FallbackSwipeHandler extends
 
     private FallbackHomeAnimationFactory mActiveAnimationFactory;
     private final boolean mRunningOverHome;
+    private final boolean mIsBB10DefaultHome;
+    @Nullable private final BB10PeekController mBB10PeekController;
 
     private final Matrix mTmpMatrix = new Matrix();
 
@@ -133,10 +140,152 @@ public class FallbackSwipeHandler extends
 
         mRunningOverHome = mGestureState.getRunningTask() != null
                 && mGestureState.getRunningTask().isHomeTask();
+        BB10FlowBridge bridge = BB10FlowBridge.get(context);
+        mIsBB10DefaultHome = bridge.isBB10DefaultHomeCached();
+        mBB10PeekController = (!mRunningOverHome
+                && bridge.isInAppPeekActive()
+                && !mGestureState.isHandlingAtomicEvent()
+                && mDp != null)
+                ? new BB10PeekController(context, mDp)
+                : null;
         if (mRunningOverHome) {
             runActionOnRemoteHandles(remoteTargetHandle ->
                     remoteTargetHandle.getTransformParams().setHomeBuilderProxy(
                     FallbackSwipeHandler.this::updateHomeActivityTransformDuringSwipeUp));
+        }
+    }
+
+    @Override
+    public boolean isBB10PeekActive() {
+        return mBB10PeekController != null;
+    }
+
+    @Override
+    public void onBB10TouchDown(float x, float y) {
+        if (mBB10PeekController != null) {
+            mBB10PeekController.onTouchDown(x, y);
+        }
+    }
+
+    @Override
+    public void onBB10TouchMove(float x, float y) {
+        if (mBB10PeekController != null) {
+            mBB10PeekController.onTouchMove(x, y);
+            // Drive transform immediately even when vertical shift is unchanged (pure horizontal
+            // Hub Drawer drag or clamped vertical plateau where AnimatedFloat.updateValue no-ops).
+            if (mRecentsAnimationTargets != null && mGestureState.getEndTarget() != HOME) {
+                applyScrollAndTransform();
+            }
+        }
+    }
+
+    @Override
+    public void onRecentsAnimationStart(RecentsAnimationController controller,
+            RecentsAnimationTargets targets, @Nullable TransitionInfo transitionInfo) {
+        super.onRecentsAnimationStart(controller, targets, transitionInfo);
+        if (mBB10PeekController != null && mGestureState.getEndTarget() != HOME) {
+            applyScrollAndTransform();
+        }
+    }
+
+    @Override
+    public void onBB10PointerShift(float deltaX, float deltaY) {
+        if (mBB10PeekController != null) {
+            mBB10PeekController.onPointerShift(deltaX, deltaY);
+        }
+    }
+
+    @Override
+    protected void onBB10ContainerReady() {
+        if (mBB10PeekController != null && mContainer != null) {
+            mBB10PeekController.attachContainer(mContainer);
+        }
+    }
+
+    @Override
+    protected boolean applyBB10PeekTransform() {
+        if (mBB10PeekController == null) {
+            return false;
+        }
+        if (mContainer != null) {
+            mBB10PeekController.attachContainer(mContainer);
+        }
+        return mBB10PeekController.applyTransform(mRemoteTargetHandles);
+    }
+
+    @Nullable
+    @Override
+    protected GestureEndTarget resolveBB10EndTarget(
+            PointF velocityPxPerMs, boolean isFlingY, boolean isCancel) {
+        if (mBB10PeekController != null) {
+            return mBB10PeekController.resolveEndTarget(velocityPxPerMs, isFlingY, isCancel);
+        }
+        return null;
+    }
+
+    @Override
+    protected boolean shouldRedirectRecentsToHome() {
+        return mIsBB10DefaultHome;
+    }
+
+    @Override
+    protected boolean startBB10GestureEndAnimation(
+            GestureEndTarget target, PointF velocityPxPerMs) {
+        if (mBB10PeekController == null) {
+            return false;
+        }
+        if (target == LAST_TASK && mBB10PeekController.isReturningToApp()) {
+            RunningWindowAnim anim = mBB10PeekController.startReturnToAppAnimation(
+                    mRemoteTargetHandles, () -> {
+                        mCurrentShift.updateValue(0f);
+                        if (mRecentsAnimationController != null) {
+                            mGestureState.setState(STATE_END_TARGET_ANIMATION_FINISHED);
+                        }
+                    });
+            setBB10RunningWindowAnim(anim);
+            return true;
+        }
+        if (target == HOME && mBB10PeekController.isCommittingHub()) {
+            clearBB10LauncherTransitionController();
+            RunningWindowAnim anim = mBB10PeekController.startCommitHubAnimation(
+                    mRemoteTargetHandles,
+                    () -> startHomeIntent(
+                            /* gestureContractAnimationFactory= */ null,
+                            /* runningTaskTarget= */ null,
+                            /* targetTaskView= */ null,
+                            /* launchCookie= */ null,
+                            /* reason= */ "FallbackSwipeHandler-BB10Hub"),
+                    () -> {
+                        if (mRecentsAnimationController != null) {
+                            mGestureState.setState(STATE_END_TARGET_ANIMATION_FINISHED);
+                        }
+                    });
+            setBB10RunningWindowAnim(anim);
+            return true;
+        }
+        if (target == HOME && mBB10PeekController.isCommittingActiveFrames()) {
+            mBB10PeekController.onActiveFramesSpringStarted();
+        }
+        return false;
+    }
+
+    @Override
+    protected RectF[] updateProgressForStartRect(Matrix[] outMatrix, float startProgress) {
+        RectF[] startRects = super.updateProgressForStartRect(outMatrix, startProgress);
+        if (mBB10PeekController != null && mBB10PeekController.isCommittingActiveFrames()) {
+            RectF peekRect = mBB10PeekController.getCurrentAppScreenRect();
+            for (int i = 0; i < startRects.length; i++) {
+                startRects[i] = new RectF(peekRect);
+            }
+            mBB10PeekController.applyTransform(mRemoteTargetHandles);
+        }
+        return startRects;
+    }
+
+    @Override
+    protected void onBB10HandlerInvalidated() {
+        if (mBB10PeekController != null) {
+            mBB10PeekController.invalidate();
         }
     }
 
@@ -221,6 +370,14 @@ public class FallbackSwipeHandler extends
             @NonNull String reason) {
         ActivityOptions options = ActivityOptions.makeCustomAnimation(mContext, 0, 0);
         Intent intent = new Intent(mGestureState.getHomeIntent());
+        if (mIsBB10DefaultHome) {
+            if (mBB10PeekController != null && mBB10PeekController.isCommittingHub()) {
+                intent.putExtra(BB10FlowBridge.EXTRA_TARGET_PAGE, BB10FlowBridge.TARGET_HUB);
+                intent.putExtra(BB10FlowBridge.EXTRA_SKIP_GESTURE_CONTRACT, true);
+            } else {
+                intent.putExtra(BB10FlowBridge.EXTRA_TARGET_PAGE, BB10FlowBridge.TARGET_ACTIVE_FRAMES);
+            }
+        }
         if (gestureContractAnimationFactory != null) {
             TaskKey taskKey = null;
             if (targetTaskView != null) {
@@ -242,6 +399,13 @@ public class FallbackSwipeHandler extends
     @Override
     public void onTasksAppeared(@NonNull RemoteAnimationTarget[] appearedTaskTargets,
             @Nullable TransitionInfo transitionInfo) {
+        if (mBB10PeekController != null && mBB10PeekController.isCommittingHub()
+                && appearedTaskTargets.length > 0
+                && appearedTaskTargets[0].windowConfiguration.getActivityType()
+                        == ACTIVITY_TYPE_HOME) {
+            mBB10PeekController.onHubHomeTaskAppeared(appearedTaskTargets[0]);
+            return;
+        }
         if (mActiveAnimationFactory != null && mActiveAnimationFactory.handleHomeTaskAppeared(
                 appearedTaskTargets)) {
             mActiveAnimationFactory = null;

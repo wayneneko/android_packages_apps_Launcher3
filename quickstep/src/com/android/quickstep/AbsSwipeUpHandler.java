@@ -608,6 +608,7 @@ public abstract class AbsSwipeUpHandler<
 
         mRecentsView = container.getOverviewPanel();
         mRecentsView.setOnPageTransitionEndCallback(null);
+        onBB10ContainerReady();
 
         mStateCallback.setState(STATE_LAUNCHER_PRESENT);
         if (isHomeStarted) {
@@ -797,6 +798,10 @@ public abstract class AbsSwipeUpHandler<
         return new MotionPauseDetector.OnMotionPauseListener() {
             @Override
             public void onMotionPauseDetected() {
+                if (isBB10PeekActive()) {
+                    mHasMotionEverBeenPaused = true;
+                    return;
+                }
                 mHasMotionEverBeenPaused = true;
                 maybeUpdateRecentsAttachedState(true/* animate */, true/* moveRunningTask */);
                 Optional.ofNullable(mContainerInterface.getTaskbarInteractor())
@@ -843,7 +848,7 @@ public abstract class AbsSwipeUpHandler<
      */
     private void maybeUpdateRecentsAttachedState(
             boolean animate, boolean moveRunningTask, boolean updateRunningTaskAlpha) {
-        if (mRecentsView == null) {
+        if (mRecentsView == null || isBB10PeekActive()) {
             return;
         }
 
@@ -1405,6 +1410,11 @@ public abstract class AbsSwipeUpHandler<
             return endTarget;
         }
 
+        GestureEndTarget bb10Target = resolveBB10EndTarget(velocityPxPerMs, isFlingY, isCancel);
+        if (bb10Target != null) {
+            return bb10Target;
+        }
+
         GestureEndTarget endTarget;
         ActiveGestureLog.CompoundString potentialReason =
                 ActiveGestureLog.CompoundString.newEmptyString();
@@ -1429,6 +1439,9 @@ public abstract class AbsSwipeUpHandler<
             ActiveGestureProtoLogProxy.logCalculateEndTargetResultAndReason(
                     "LAST_TASK", reasonString);
             return LAST_TASK;
+        }
+        if (endTarget == RECENTS && shouldRedirectRecentsToHome()) {
+            return HOME;
         }
 
         TaskView nextPageTaskView = mRecentsView != null
@@ -1870,6 +1883,10 @@ public abstract class AbsSwipeUpHandler<
             }
         }
 
+
+        if (startBB10GestureEndAnimation(target, velocityPxPerMs)) {
+            return;
+        }
 
         if (mGestureState.getEndTarget() == HOME) {
             getOrientationHandler().adjustFloatingIconStartVelocity(velocityPxPerMs);
@@ -2448,9 +2465,11 @@ public abstract class AbsSwipeUpHandler<
         TaskStackChangeListeners.getInstance().unregisterTaskStackListener(
                 mActivityRestartListener);
         mTaskSnapshotCache.clear();
+        onBB10HandlerInvalidated();
     }
 
     private void invalidateHandler() {
+        onBB10HandlerInvalidated();
         if (!mContainerInterface.isInLiveTileMode() || mGestureState.getEndTarget() != RECENTS) {
             mInputConsumerProxy.destroy();
             mTaskAnimationManager.setLiveTileCleanUpHandler(null);
@@ -3109,6 +3128,9 @@ public abstract class AbsSwipeUpHandler<
             mStartMovingTasks = true;
             startInterceptingTouchesForGesture();
         }
+        if (notSwipingToHome && applyBB10PeekTransform()) {
+            return;
+        }
         for (RemoteTargetHandle remoteHandle : mRemoteTargetHandles) {
             AnimatorControllerWithResistance playbackController =
                     remoteHandle.getPlaybackController();
@@ -3130,6 +3152,48 @@ public abstract class AbsSwipeUpHandler<
             }
         }
     }
+
+    // Minimal BB10 Flow hooks overridden only by FallbackSwipeHandler when BB10Launcher is Home.
+    public boolean isBB10PeekActive() {
+        return false;
+    }
+
+    public void onBB10TouchDown(float x, float y) {}
+
+    public void onBB10TouchMove(float x, float y) {}
+
+    public void onBB10PointerShift(float deltaX, float deltaY) {}
+
+    protected void onBB10ContainerReady() {}
+
+    protected boolean applyBB10PeekTransform() {
+        return false;
+    }
+
+    @Nullable
+    protected GestureEndTarget resolveBB10EndTarget(
+            PointF velocityPxPerMs, boolean isFlingY, boolean isCancel) {
+        return null;
+    }
+
+    protected boolean startBB10GestureEndAnimation(
+            GestureEndTarget target, PointF velocityPxPerMs) {
+        return false;
+    }
+
+    protected boolean shouldRedirectRecentsToHome() {
+        return false;
+    }
+
+    protected void setBB10RunningWindowAnim(RunningWindowAnim anim) {
+        mRunningWindowAnim = new RunningWindowAnim[]{anim};
+    }
+
+    protected void clearBB10LauncherTransitionController() {
+        mLauncherTransitionController = null;
+    }
+
+    protected void onBB10HandlerInvalidated() {}
 
     // Scaling of RecentsView during quick switch based on amount of recents scroll
     private float getScaleProgressDueToScroll() {

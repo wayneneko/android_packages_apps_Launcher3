@@ -51,6 +51,7 @@ import com.android.launcher3.util.Preconditions;
 import com.android.launcher3.util.TraceHelper;
 import com.android.quickstep.AbsSwipeUpHandler;
 import com.android.quickstep.AbsSwipeUpHandler.Factory;
+import com.android.quickstep.BB10FlowBridge;
 import com.android.quickstep.GestureState;
 import com.android.quickstep.InputConsumer;
 import com.android.quickstep.RecentsAnimationCallbacks;
@@ -203,8 +204,10 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
             return;
         }
 
-        // Proxy events to recents view
-        if (mPassedWindowMoveSlop && mInteractionHandler != null
+        // Proxy events to recents view (bypassed when BB10 in-app Peek owns horizontal drag)
+        boolean bb10PeekActive = mInteractionHandler != null
+                && mInteractionHandler.isBB10PeekActive();
+        if (!bb10PeekActive && mPassedWindowMoveSlop && mInteractionHandler != null
                 && !mRecentsViewDispatcher.hasConsumer()) {
             mRecentsViewDispatcher.setConsumer(mInteractionHandler
                     .getRecentsViewDispatcher(mNavBarPosition.getRotation()));
@@ -216,24 +219,26 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
         int edgeFlags = ev.getEdgeFlags();
         ev.setEdgeFlags(edgeFlags | EDGE_NAV_BAR);
 
-        if (mGestureState.isTrackpadGesture()) {
-            // Disable scrolling in RecentsView for 3-finger trackpad gesture. We don't know if a
-            // trackpad motion event is 3-finger or 4-finger with the U API until ACTION_MOVE (we
-            // skip ACTION_POINTER_UP events in TouchInteractionService), so in order to make sure
-            // that RecentsView always get a closed sequence of motion events and yet disable
-            // 3-finger scroll, we do the following (1) always dispatch ACTION_DOWN and ACTION_UP
-            // trackpad multi-finger motion events. (2) only dispatch 4-finger ACTION_MOVE motion
-            // events.
-            switch (ev.getActionMasked()) {
-                case ACTION_MOVE -> {
-                    if (mGestureState.isFourFingerTrackpadGesture()) {
-                        mRecentsViewDispatcher.dispatchEvent(ev);
+        if (!bb10PeekActive) {
+            if (mGestureState.isTrackpadGesture()) {
+                // Disable scrolling in RecentsView for 3-finger trackpad gesture. We don't know if a
+                // trackpad motion event is 3-finger or 4-finger with the U API until ACTION_MOVE (we
+                // skip ACTION_POINTER_UP events in TouchInteractionService), so in order to make sure
+                // that RecentsView always get a closed sequence of motion events and yet disable
+                // 3-finger scroll, we do the following (1) always dispatch ACTION_DOWN and ACTION_UP
+                // trackpad multi-finger motion events. (2) only dispatch 4-finger ACTION_MOVE motion
+                // events.
+                switch (ev.getActionMasked()) {
+                    case ACTION_MOVE -> {
+                        if (mGestureState.isFourFingerTrackpadGesture()) {
+                            mRecentsViewDispatcher.dispatchEvent(ev);
+                        }
                     }
+                    default -> mRecentsViewDispatcher.dispatchEvent(ev);
                 }
-                default -> mRecentsViewDispatcher.dispatchEvent(ev);
+            } else {
+                mRecentsViewDispatcher.dispatchEvent(ev);
             }
-        } else {
-            mRecentsViewDispatcher.dispatchEvent(ev);
         }
         ev.setEdgeFlags(edgeFlags);
 
@@ -280,11 +285,16 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                 int ptrId = ev.getPointerId(ptrIdx);
                 if (ptrId == mActivePointerId) {
                     final int newPointerIdx = ptrIdx == 0 ? 1 : 0;
+                    float shiftX = ev.getX(newPointerIdx) - mLastPos.x;
+                    float shiftY = ev.getY(newPointerIdx) - mLastPos.y;
                     mDownPos.set(
                             ev.getX(newPointerIdx) - (mLastPos.x - mDownPos.x),
                             ev.getY(newPointerIdx) - (mLastPos.y - mDownPos.y));
                     mLastPos.set(ev.getX(newPointerIdx), ev.getY(newPointerIdx));
                     mActivePointerId = ev.getPointerId(newPointerIdx);
+                    if (mInteractionHandler != null) {
+                        mInteractionHandler.onBB10PointerShift(shiftX, shiftY);
+                    }
                 }
                 break;
             }
@@ -347,10 +357,12 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
 
                 if (!mPassedPilferInputSlop) {
                     if (passedSlop) {
-                        // Horizontal gesture is not allowed in this region
+                        // Horizontal gesture is not allowed in this region (also yield purely
+                        // horizontal bottom-edge drags back to the app when BB10 Peek is active)
                         boolean isHorizontalSwipeWhenDisabled =
-                                (mDisableHorizontalSwipe && Math.abs(displacementX) > Math.abs(
-                                        displacementY));
+                                (mDisableHorizontalSwipe
+                                        || BB10FlowBridge.isBB10InAppPeekActive(this))
+                                        && Math.abs(displacementX) > Math.abs(displacementY);
                         // Do not allow quick switch for trackpad 3-finger gestures
                         // TODO(b/261815244): might need to impose stronger conditions for the swipe
                         //  angle
@@ -382,6 +394,7 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
                 if (mInteractionHandler != null) {
                     if (mPassedWindowMoveSlop) {
                         // Move
+                        mInteractionHandler.onBB10TouchMove(mLastPos.x, mLastPos.y);
                         mInteractionHandler.updateDisplacement(displacement - mStartDisplacement);
                     }
 
@@ -440,6 +453,7 @@ public class OtherActivityInputConsumer extends ContextWrapper implements InputC
         mMotionPauseDetector.setIsTrackpadGesture(mGestureState.isTrackpadGesture());
         mInteractionHandler.initWhenReady(
                 "OtherActivityInputConsumer.startTouchTrackingForWindowAnimation");
+        mInteractionHandler.onBB10TouchDown(mDownPos.x, mDownPos.y);
         ActiveGestureProtoLogProxy.logGestureStartSwipeHandler(
                 mInteractionHandler.getClass().getSimpleName());
 

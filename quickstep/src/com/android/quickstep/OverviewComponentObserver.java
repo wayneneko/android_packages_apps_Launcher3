@@ -279,6 +279,7 @@ public final class OverviewComponentObserver {
             }
         }
         dispatchOverviewState();
+        BB10FlowBridge.get(mContext).onOverviewTargetChanged(this);
     }
 
     /**
@@ -295,6 +296,7 @@ public final class OverviewComponentObserver {
     private void onDestroy() {
         mUserPreferenceChangeReceiver.close();
         unregisterOtherHomeAppUpdateReceiver();
+        BB10FlowBridge.get(mContext).onOverviewObserverDestroyed();
     }
 
     private void unregisterOtherHomeAppUpdateReceiver() {

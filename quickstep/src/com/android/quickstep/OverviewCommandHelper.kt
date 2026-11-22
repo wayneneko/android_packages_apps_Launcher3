@@ -471,6 +471,13 @@ constructor(
                 ) {
                     taskbarInteractor.openQuickSwitchView()
                     return true
+                } else if (
+                    BB10FlowBridge.tryStartBB10ActiveFrames(
+                        overviewComponentObserver,
+                        command.displayId,
+                    )
+                ) {
+                    return true
                 } else {
                     keyboardFocusTask = KeyboardFocusTask.CurrentPageTaskView
                 }
@@ -498,15 +505,33 @@ constructor(
                 }
             }
 
-            TOGGLE_WITH_FOCUS ->
+            TOGGLE_WITH_FOCUS -> {
+                if (
+                    BB10FlowBridge.tryStartBB10ActiveFrames(
+                        overviewComponentObserver,
+                        command.displayId,
+                    )
+                ) {
+                    return true
+                }
                 // When Recents is not currently visible, the command's type is SHOW
                 // when overview is triggered via the keyboard overview button or Action+Tab
                 // keys (Not Alt+Tab which is KQS). The overview button on-screen in 3-button
                 // nav is TYPE_TOGGLE.
                 keyboardFocusTask = KeyboardFocusTask.ExpectedCurrentTask
+            }
 
             TOGGLE,
-            TOGGLE_OVERVIEW_PREVIOUS -> {}
+            TOGGLE_OVERVIEW_PREVIOUS -> {
+                if (
+                    BB10FlowBridge.tryStartBB10ActiveFrames(
+                        overviewComponentObserver,
+                        command.displayId,
+                    )
+                ) {
+                    return true
+                }
+            }
         }
 
         recentsView?.setKeyboardFocusTask(keyboardFocusTask)

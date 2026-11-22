@@ -278,8 +278,15 @@ object InputConsumerUtils {
             }
 
             val navHandle = tac?.navHandle ?: SystemUiProxy.INSTANCE[context]
+            val yieldToBB10Home =
+                BB10FlowBridge.shouldYieldHomeGestureToBB10(
+                    overviewComponentObserver,
+                    gestureState,
+                    previousGestureState,
+                )
             if (
                 canStartSystemGesture &&
+                    !yieldToBB10Home &&
                     !previousGestureState.isRecentsAnimationRunning &&
                     navHandle.canNavHandleBeLongPressed() &&
                     !ignoreThreeFingerTrackpadForNavHandleLongPress(gestureState)
@@ -622,6 +629,11 @@ object InputConsumerUtils {
         } else if (
             deviceState.isGestureBlockedTask(runningTask) ||
                 launcherChildActivityResumed ||
+                BB10FlowBridge.shouldYieldHomeGestureToBB10(
+                    overviewComponentObserver,
+                    gestureState,
+                    previousGestureState,
+                ) ||
                 ignoreNonTrackpadMouseEvent(context, gestureState, event)
         ) {
             getDefaultInputConsumer(
@@ -634,6 +646,14 @@ object InputConsumerUtils {
                         "%sis launcher child-task, trying to use default input consumer"
                     else if (deviceState.isGestureBlockedTask(runningTask))
                         "%sis gesture-blocked task, trying to use default input consumer"
+                    else if (
+                        BB10FlowBridge.shouldYieldHomeGestureToBB10(
+                            overviewComponentObserver,
+                            gestureState,
+                            previousGestureState,
+                        )
+                    )
+                        "%syielding home gesture natively to BB10Launcher"
                     else "%sis non trackpad mouse event, trying to use default input consumer",
                     SUBSTRING_PREFIX,
                 ),

@@ -90,7 +90,8 @@ open class RecentsState(@JvmField val ordinal: Int, private val mFlags: Int) :
     fun getScrimColor(context: Context) =
         ScrimColors(
             backgroundColor =
-                if (hasFlag(FLAG_SCRIM)) Themes.getAttrColor(context, R.attr.overviewScrimColor)
+                if (hasFlag(FLAG_SCRIM) && !com.android.quickstep.BB10FlowBridge.isBB10InAppPeekActive(context))
+                    Themes.getAttrColor(context, R.attr.overviewScrimColor)
                 else Color.TRANSPARENT,
             foregroundColor = Color.TRANSPARENT,
         )
@@ -183,7 +184,12 @@ open class RecentsState(@JvmField val ordinal: Int, private val mFlags: Int) :
     }
 
     override fun getDepth(context: ActivityContext) =
-        if (SYSTEM_OVERVIEW_BLUR_ENABLED) DEPTH_70_PERCENT else DEPTH_0_PERCENT
+        if (
+            SYSTEM_OVERVIEW_BLUR_ENABLED &&
+                !com.android.quickstep.BB10FlowBridge.isBB10InAppPeekActive(context.asContext())
+        )
+            DEPTH_70_PERCENT
+        else DEPTH_0_PERCENT
 
     private class ModalState(id: Int, flags: Int) : RecentsState(id, flags) {
         override fun onBackInvoked(container: RecentsViewContainer) {
@@ -216,8 +222,9 @@ open class RecentsState(@JvmField val ordinal: Int, private val mFlags: Int) :
 
         override fun getDepth(context: ActivityContext) =
             if (
-                DesktopVisibilityController.INSTANCE.get(context.asContext())
-                    .isInDesktopMode(context.asContext().displayId)
+                com.android.quickstep.BB10FlowBridge.isBB10InAppPeekActive(context.asContext()) ||
+                    DesktopVisibilityController.INSTANCE.get(context.asContext())
+                        .isInDesktopMode(context.asContext().displayId)
             )
                 DEPTH_0_PERCENT
             else DEPTH_70_PERCENT
